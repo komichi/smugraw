@@ -1,0 +1,116 @@
+= Smugraw
+
+Smugraw is a library to access SmugMug[http://smugmug.com] api in a simple way.
+It maps exactly the methods described in {the official api documentation}[http://www.smugmug.com/hack].
+It also tries to present the data returned in a simple and intuitive way.
+The methods are fetched from flickr when loading the library by using introspection capabilities. So it is always up-to-date with regards to new methods added by flickr.
+
+The github repository: http://github.com/komichi/smugraw
+
+= Installation
+Type this in a console (you might need to be superuser)
+
+ gem install json (This is only necessary on ruby 1.8)
+ gem install smugraw
+
+This will recreate the documentation by fetching the methods descriptions from flickr and then virtually plugging them in standard rdoc documentation.
+ $ cd smugraw
+ $ rake rdoc
+
+= Features
+
+* Minimal dependencies
+* Complete support of SmugMug API. This doesn't require an update of the library
+* Ruby syntax similar to the SmugMug API
+* SmugMug authentication
+* HTTPS Support
+* Photo upload
+* Proxy support
+
+= Usage
+
+== Simple
+
+ require 'smugraw'
+
+ SmugRaw.api_key="... Your API key ..."
+ SmugRaw.shared_secret="... Your shared secret ..."
+
+ list   = smugmug.photos.getRecent
+
+ id     = list[0].id
+ secret = list[0].secret
+ info = smugmug.photos.getInfo :photo_id => id, :secret => secret
+
+ puts info.title           # => "PICT986"
+ puts info.dates.taken     # => "2006-07-06 15:16:18"
+
+ sizes = smugmug.images.getSizes :photo_id => id
+
+ original = sizes.find {|s| s.label == 'Original' }
+ puts original.width       # => "800" -- may fail if they have no original marked image
+
+== Authentication
+
+  require 'smugraw'
+
+  SmugRaw.api_key="... Your API key ..."
+  SmugRaw.shared_secret="... Your shared secret ..."
+
+  token = smugmug.get_request_token
+  auth_url = smugmug.get_authorize_url(token['oauth_token'], :perms => 'delete')
+
+  puts "Open this url in your process to complete the authication process : #{auth_url}"
+  puts "Copy here the number given when you complete the process."
+  verify = gets.strip
+
+  begin
+    smugmug.get_access_token(token['oauth_token'], token['oauth_token_secret'], verify)
+    login = smugmug.test.login
+    puts "You are now authenticated as #{login.username} with token #{smugmug.access_token} and secret #{smugmug.access_secret}"
+  rescue SmugRaw::FailedResponse => e
+    puts "Authentication failed : #{e.msg}"
+  end
+
+If the user has already been authenticated, you can reuse the access token and access secret:
+
+  require 'smugraw'
+
+  SmugRaw.api_key="... Your API key ..."
+  SmugRaw.shared_secret="... Your shared secret ..."
+
+  smugmug.access_token = "... Your access token ..."
+  smugmug.access_secret = "... Your access secret ..."
+
+  # From here you are logged:
+  login = smugmug.test.login
+  puts "You are now authenticated as #{login.username}"
+
+If you need to have several users authenticated at the same time in your application (ex: a public web application) you need to create separate SmugRaw objects since it keeps the authentication data internally.
+
+  smugmug = SmugRaw::SmugRaw.new
+
+== Upload
+
+  require 'smugraw'
+
+  SmugRaw.api_key="... Your API key ..."
+  SmugRaw.shared_secret="... Your shared secret ..."
+
+  PHOTO_PATH='photo.jpg'
+
+  # You need to be authentified to do that, see the previous examples.
+  smugmug.upload_photo PHOTO_PATH, :Caption => "Caption"
+
+== Proxy
+
+  require 'smugraw'
+  SmugRaw.proxy = "http://user:pass@proxy.example.com:3129/"
+
+== Secure endpoints
+
+  require 'smugraw'
+  SmugRaw.secure = true
+
+See the _examples_ directory to find more examples.
+

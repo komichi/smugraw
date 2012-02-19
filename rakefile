@@ -1,0 +1,23 @@
+require 'rubygems'
+require 'rake/clean'
+#require 'rdoc/task'
+require 'rake/testtask'
+
+lib = File.expand_path('../lib/', __FILE__)
+$:.unshift lib unless $:.include?(lib)
+
+require './smugraw'
+#require './smugraw_rdoc' if RUBY_VERSION >= "1.9"
+
+#SmugRaw.api_key = ENV['SMUGRAW_API_KEY']
+#SmugRaw.shared_secret = ENV['SMUGRAW_SHARED_SECRET']
+
+#Rake::RDocTask.new do |rd|
+#  rd.main = "README.rdoc"
+#  rd.rdoc_files.include "README.rdoc", "lib/smugraw.rb"
+#end
+
+Rake::TestTask.new do |t|
+  t.warning = true
+end
+
