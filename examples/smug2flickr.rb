@@ -1,8 +1,8 @@
 #!/usr/bin/env ruby
 
 require 'rubygems'
-require './smugraw'
-require './smugraw/env'
+require 'smugraw'
+require 'smugraw/env'
 require 'flickraw'
 require 'flickraw/env'
 require 'date'
@@ -13,27 +13,12 @@ require 'pp'
 $be_quiet = false
 $debug = false
 $background = false
-$skip_collections = false
+$skip_collections = true
 
 def usage
   $stderr.puts(<<EOF)
-smug2flickr.rb [--help|-h] [--quiet|-q] [--debug|-d] [--skipcols|-s]
+smug2flickr.rb [--help|-h] [--quiet|-q] [--debug|-d] [--docols|-c]
                <smugmug dump file> <any jpg file>
-
-NOTE: This script is to be used in conjunction with smugdump.rb to pull
-      only the required albumdata down; it attempts to be smart about 
-      moving SmugMug data to Flickr by:
-      (1) mapping categories to collections
-      (2) mapping subcategories to (sub)collections
-      (3) mapping albums to photosets
-      (4) inserting photosets in appropriate (sub)collections
-      (5) utilizing md5 checksum (machine) tags to ensure non-dup uploads
-          (if you haven't tagged your Flickr data, do so with the Flickraw
-           utility script)
-      However, if you have subcategories and albums within a given category
-      this breaks because Flickr does not allow collections to be nexted with
-      subcollections and photosets, so you'll need to sue the -s flag and
-      handle this manually.
 EOF
   exit
 end
@@ -58,7 +43,7 @@ end
 opts = GetoptLong.new(
          [ '--help',            '-h', GetoptLong::NO_ARGUMENT ],
          [ '--quiet',           '-q', GetoptLong::NO_ARGUMENT ],
-         [ '--skipcols',        '-s', GetoptLong::NO_ARGUMENT ],
+         [ '--docols',          '-c', GetoptLong::NO_ARGUMENT ],
         #[ '--background',      '-b', GetoptLong::NO_ARGUMENT ],
          [ '--debug',           '-d', GetoptLong::NO_ARGUMENT ])
 
@@ -67,7 +52,7 @@ opts.each do |opt, arg|
     when '--help': usage
     when '--quiet': $be_quiet = true
     when '--debug': $debug = true
-    when '--skipcols': $skip_collections = true
+    when '--docols': $skip_collections = false
     #when '--background': $background = true
   end
 end
@@ -100,8 +85,8 @@ def make_flickr_coll_hash_tree(coll_tree, hash_tree)
   }
 end
 
-die 'need a smugdump file!' unless smugdump_file = ARGV.shift
-die 'need a jpeg file!' unless black_photo_file = ARGV.shift
+die 'FATAL: need a smugdump file!' unless smugdump_file = ARGV.shift
+die 'FATAL: need a jpeg file!' unless black_photo_file = ARGV.shift
 
 # (0) load the black jpeg file (for some reason
 #      Flickr requires a primary photo for each photoset
@@ -116,7 +101,7 @@ begin
     black_md5sum  = Digest::MD5.hexdigest s
   }
 rescue Exception => e
-  die 'failed to open black photo file! ' + e.to_s
+  die 'FATAL: failed to open black photo file! ' + e.to_s
 end
 begin
 # if it's already there, use it
@@ -135,20 +120,21 @@ begin
                             :tags => 'checksum:sha1=' + black_sha1sum })
   end
 rescue Exception => e
-  die 'failed to upload black photo file!' + e.to_s
+  die 'FATAL: failed to upload black photo file!' + e.to_s
 end
 log('done', "\n")
 
 # (1) load the smugmug dump file
 smugdump_str = ''
 smugdump = nil
-#begin
-log('loading smugmug data ... ')
-File.open(smugdump_file) { |f| smugdump_str = f.read }
-smugdump = JSON.parse(smugdump_str)
-#rescue Exception => e
-die 'failed to open SmugMug dump file: ' + e.to_s unless smugdump
-#end
+begin
+  log('loading smugmug data ... ')
+  File.open(smugdump_file) { |f| smugdump_str = f.read }
+  smugdump = JSON.parse(smugdump_str)
+rescue Exception => e
+  die 'FATAL: failed to open SmugMug dump file: ' + e.to_s
+end
+die 'FATAL: failed to open SmugMug dump file: ' + e.to_s unless smugdump
 log('done', "\n")
 
 # (2) sort the smugmug photos in order of the date they were taken
@@ -169,21 +155,21 @@ pp flickr_coll_tree if $debug
 # (4) create a Flickr collection for each SmugMug category,
 #     unless one with the same name already exists,
 #     recording the collection ids as we go
-#begin
 unless $skip_collections
-  log('creating a Flickr collection for each category ...')
-    smugdump['Categories'].each { |category|
-      smugmug_category_title = category['Name']
-      unless flickr_coll_tree[smugmug_category_title]
-        flickr_coll = flickr.collections.create({ :title => smugmug_category_title,
-                                                  :description => '' })
-        flickr_coll_tree[smugmug_category_title] = flickr_coll
-      end
-      log('.')
-    }
-  #rescue Exception => e
-  #die 'failed while creating a collection for each category: ' + e.to_s
-  #end
+  begin
+    log('creating a Flickr collection for each category ...')
+      smugdump['Categories'].each { |category|
+        smugmug_category_title = category['Name']
+        unless flickr_coll_tree[smugmug_category_title]
+          flickr_coll = flickr.collections.create({ :title => smugmug_category_title,
+                                                    :description => '' })
+          flickr_coll_tree[smugmug_category_title] = flickr_coll
+        end
+        log('.')
+      }
+  rescue Exception => e
+    log 'WARNING: failed while creating a collection for each category: ' + e.to_s
+  end
   log(' done', "\n")
 end
 
@@ -192,30 +178,30 @@ unless $skip_collections
   #     unless one with the same name already exists,
   #     setting the created parent collection id's,
   #     recording the collection ids as we go
-  #begin
-  log('creating a Flickr collection for each SmugMug sub-category ...')
-  smugdump['SubCategories'].each { |subcategory|
-    smugmug_subcat_title = subcategory['Name']
-    smugmug_subcat_parent_title = subcategory['Category']
-    raise 'no Flickr parent collection ' + smugmug_subcat_parent_title +
-          ' exists for SmugMug subcategory ' + smugmug_subcat_title unless
-          flickr_coll_tree[smugmug_subcat_parent_title]
-    flickr_coll_parent_id = flickr_coll_tree[smugmug_subcat_parent_title]['id']
-    debug('looking for ' + smugmug_subcat_parent_title + ' / ' + smugmug_subcat_title, "\n")
-    debug('flickr_coll_tree[' + smugmug_subcat_parent_title + '] is ' + flickr_coll_tree[smugmug_subcat_parent_title].inspect, "\n")
-    unless flickr_coll_tree[smugmug_subcat_parent_title]['collection'] &&
-           flickr_coll_tree[smugmug_subcat_parent_title]['collection'][smugmug_subcat_title]
-      debug("didn't find " + smugmug_subcat_parent_title + ' / ' + smugmug_subcat_title, "\n")
-      new_collection = flickr.collections.create({ :title => smugmug_subcat_title,
-                                                   :description => '',
-                                                   :parent_id => flickr_coll_parent_id })
-      flickr_coll_tree[smugmug_subcat_parent_title]['collection'][smugmug_subcat_title] = new_collection.to_hash
-    end
-    log('.')
-  }
-  #rescue Exception => e
-  #  die("failed to create subcategory: " + e.to_s)
-  #end
+  begin
+    log('creating a Flickr collection for each SmugMug sub-category ...')
+    smugdump['SubCategories'].each { |subcategory|
+      smugmug_subcat_title = subcategory['Name']
+      smugmug_subcat_parent_title = subcategory['Category']
+      raise 'no Flickr parent collection ' + smugmug_subcat_parent_title +
+            ' exists for SmugMug subcategory ' + smugmug_subcat_title unless
+            flickr_coll_tree[smugmug_subcat_parent_title]
+      flickr_coll_parent_id = flickr_coll_tree[smugmug_subcat_parent_title]['id']
+      debug('looking for ' + smugmug_subcat_parent_title + ' / ' + smugmug_subcat_title, "\n")
+      debug('flickr_coll_tree[' + smugmug_subcat_parent_title + '] is ' + flickr_coll_tree[smugmug_subcat_parent_title].inspect, "\n")
+      unless flickr_coll_tree[smugmug_subcat_parent_title]['collection'] &&
+             flickr_coll_tree[smugmug_subcat_parent_title]['collection'][smugmug_subcat_title]
+        debug("didn't find " + smugmug_subcat_parent_title + ' / ' + smugmug_subcat_title, "\n")
+        new_collection = flickr.collections.create({ :title => smugmug_subcat_title,
+                                                     :description => '',
+                                                     :parent_id => flickr_coll_parent_id })
+        flickr_coll_tree[smugmug_subcat_parent_title]['collection'][smugmug_subcat_title] = new_collection.to_hash
+      end
+      log('.')
+    }
+  rescue Exception => e
+    log("WARNING: failed to create subcategory: " + e.to_s)
+  end
   log(' done', "\n")
 end
 
@@ -223,15 +209,15 @@ end
 #       to use later to ensure we don't create duplicates
 flickr_photosets = { }
 log('grabbing Flickr photosets ...')
-#begin
+begin
 flickr.photosets.getList.each { |photoset|
   raise "sorry (I'm dumb!) I can't handle duplicate " +
         "photoset names!" if flickr_photosets.has_key?(photoset['title'])
   flickr_photosets[photoset['title']] = photoset
 }
-#rescue Exception => e
-# die "failed to obtain Flickr photoset list: " + e.to_s
-#end
+rescue Exception => e
+  die "failed to obtain Flickr photoset list: " + e.to_s
+end
 log(' done', "\n")
 
 # (7) (a) create a Flickr photoset for each SmugMug album
@@ -291,6 +277,7 @@ log('uploading photos ... ')
 smugdump['Images'].each { |image|
   log('"' + image['Caption'] + '" ')
   image_file = "/tmp/" + image['id'].to_s + ".jpg"
+  debug('checking image md5sum=' + image['MD5Sum'])
 # skip photos already on flickr
   flickr_photos = flickr.photos.search(:tags => 'checksum:md5=' + image['MD5Sum'])
   next if flickr_photos && flickr_photos.size > 0
@@ -328,7 +315,7 @@ smugdump['Images'].each { |image|
                                 :photo_id => flickr_photo_id })
     log('Done', "\n")
   rescue Exception => e
-    die("warning: failed to download photo #{image['id']} (caption #{image['Caption']}): " + e)
+    log("WARNING: failed to download photo #{image['id']} (caption #{image['Caption']}): " + e)
   ensure
     FileUtils.rm(image_file) if File.exists?(image_file)
   end
